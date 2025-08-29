@@ -5,6 +5,7 @@ import time
 import sqlite3
 import csv
 import os
+import winsound
 from datetime import datetime, timezone, timedelta
 from smartcard.System import readers
 from smartcard.util import toHexString
@@ -20,8 +21,39 @@ class AttendanceSystemCSV:
         self.last_uid = None
         self.db_path = db_path
         self.instructors_csv = instructors_csv
+        self.sound_enabled = True  # 音声機能の有効/無効
         self.init_database()
         self.init_instructors_csv()
+    
+    def play_beep(self, beep_type="success"):
+        """ビープ音を再生"""
+        if not self.sound_enabled:
+            return
+        
+        try:
+            if beep_type == "success":
+                # 成功音：高い音で短く2回
+                winsound.Beep(1000, 200)  # 1000Hz, 200ms
+                time.sleep(0.1)
+                winsound.Beep(1000, 200)
+            elif beep_type == "error":
+                # エラー音：低い音で長く1回
+                winsound.Beep(400, 500)   # 400Hz, 500ms
+            elif beep_type == "card_detected":
+                # カード検出音：中程度の音で短く1回
+                winsound.Beep(800, 150)   # 800Hz, 150ms
+        except Exception as e:
+            print(f"音声再生エラー: {e}")
+    
+    def toggle_sound(self):
+        """音声機能のオン/オフを切り替え"""
+        self.sound_enabled = not self.sound_enabled
+        status = "有効" if self.sound_enabled else "無効"
+        print(f"音声機能を{status}にしました。")
+        
+        # テスト音を再生
+        if self.sound_enabled:
+            self.play_beep("success")
         
     def init_database(self):
         """データベースとテーブルを初期化（打刻記録のみ）"""
@@ -183,6 +215,8 @@ class AttendanceSystemCSV:
         
         if not instructor_info:
             print(f"未登録のカードです (UID: {card_uid})")
+            # エラー音を再生
+            self.play_beep("error")
             return False
         
         instructor_name = instructor_info['name']
@@ -230,6 +264,8 @@ class AttendanceSystemCSV:
                 conn.close()
                 
                 print(f"【{action}】{instructor_name} さん ({timestamp_str})")
+                # 成功音を再生
+                self.play_beep("success")
                 return True
                 
             except sqlite3.OperationalError as e:
@@ -239,9 +275,13 @@ class AttendanceSystemCSV:
                     continue
                 else:
                     print(f"打刻記録エラー: {e}")
+                    # エラー音を再生
+                    self.play_beep("error")
                     return False
             except Exception as e:
                 print(f"打刻記録エラー: {e}")
+                # エラー音を再生
+                self.play_beep("error")
                 return False
             finally:
                 try:
@@ -250,6 +290,8 @@ class AttendanceSystemCSV:
                 except:
                     pass
         
+        # 最大リトライ回数に達した場合
+        self.play_beep("error")
         return False
     
     def list_instructors(self):
@@ -607,6 +649,7 @@ def main():
         return
     
     while True:
+        sound_status = "有効" if system.sound_enabled else "無効"
         print("\n=== 出退勤管理システム（CSV版） ===")
         print("1. 出退勤監視開始")
         print("2. 講師登録")
@@ -614,9 +657,10 @@ def main():
         print("4. 今日の打刻記録表示")
         print("5. 今日の出退勤状況サマリー")
         print("6. 講師マスタCSVファイル確認")
-        print("7. 終了")
+        print(f"7. 音声設定 (現在: {sound_status})")
+        print("8. 終了")
         
-        choice = input("選択してください (1-7): ").strip()
+        choice = input("選択してください (1-8): ").strip()
         
         if choice == "1":
             try:
@@ -640,6 +684,9 @@ def main():
             system.edit_instructors_csv()
             
         elif choice == "7":
+            system.toggle_sound()
+            
+        elif choice == "8":
             print("システムを終了します。")
             break
             
