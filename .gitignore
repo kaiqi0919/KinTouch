@@ -5,6 +5,9 @@ attendance.db
 instruction.csv
 instructors.csv
 
+# ログディレクトリ
+log/
+
 # Python関連
 __pycache__/
 *.py[cod]

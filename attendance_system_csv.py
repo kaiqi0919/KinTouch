@@ -345,6 +345,155 @@ class AttendanceSystemCSV:
         except Exception as e:
             print(f"今日の記録取得エラー: {e}")
     
+    def show_date_records(self):
+        """特定の日付の打刻記録を表示"""
+        print("\n=== 特定の日付の打刻記録表示 ===")
+        
+        # 日付入力
+        while True:
+            date_input = input("日付を入力してください (YYYY-MM-DD形式、例: 2025-01-15): ").strip()
+            
+            if not date_input:
+                print("日付の入力をキャンセルしました。")
+                return
+            
+            # 日付形式の検証
+            try:
+                # 日付の妥当性をチェック
+                datetime.strptime(date_input, "%Y-%m-%d")
+                break
+            except ValueError:
+                print("無効な日付形式です。YYYY-MM-DD形式で入力してください。")
+                continue
+        
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT instructor_name, record_type, timestamp 
+                FROM time_records
+                WHERE DATE(timestamp) = ?
+                ORDER BY timestamp DESC
+            ''', (date_input,))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            if results:
+                print(f"\n=== {date_input} の打刻記録 ===")
+                print(f"{'時刻':<20} {'講師名':<15} {'種別':<6}")
+                print("-" * 45)
+                
+                for name, record_type, timestamp in results:
+                    action = "出勤" if record_type == "IN" else "退勤"
+                    # 時刻部分のみを抽出
+                    time_part = timestamp.split()[1] if ' ' in timestamp else timestamp
+                    padded_name = self.pad_string(name, 15)
+                    print(f"{time_part:<20} {padded_name} {action}")
+                
+                print(f"\n合計記録数: {len(results)}件")
+            else:
+                print(f"{date_input} の打刻記録はありません。")
+                
+        except Exception as e:
+            print(f"指定日付の記録取得エラー: {e}")
+    
+    def show_date_summary(self):
+        """特定の日付の出退勤状況サマリー"""
+        print("\n=== 特定の日付の出退勤状況サマリー ===")
+        
+        # 日付入力
+        while True:
+            date_input = input("日付を入力してください (YYYY-MM-DD形式、例: 2025-01-15): ").strip()
+            
+            if not date_input:
+                print("日付の入力をキャンセルしました。")
+                return
+            
+            # 日付形式の検証
+            try:
+                # 日付の妥当性をチェック
+                datetime.strptime(date_input, "%Y-%m-%d")
+                break
+            except ValueError:
+                print("無効な日付形式です。YYYY-MM-DD形式で入力してください。")
+                continue
+        
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT instructor_name, record_type, timestamp
+                FROM time_records
+                WHERE DATE(timestamp) = ?
+                ORDER BY instructor_name, timestamp
+            ''', (date_input,))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            if results:
+                # 講師ごとにグループ化
+                instructor_records = {}
+                for name, record_type, timestamp in results:
+                    if name not in instructor_records:
+                        instructor_records[name] = []
+                    instructor_records[name].append((record_type, timestamp))
+                
+                print(f"\n=== {date_input} の出退勤状況サマリー ===")
+                # ヘッダーの表示幅を調整
+                header_name = self.pad_string("講師名", 15)
+                header_status = self.pad_string("最終状態", 10)
+                header_time = self.pad_string("最終打刻時刻", 20)
+                print(f"{header_name} {header_status} {header_time} その日の記録")
+                print("-" * 75)
+                
+                for name, records in instructor_records.items():
+                    last_record = records[-1]
+                    status = "出勤で終了" if last_record[0] == "IN" else "退勤で終了"
+                    last_time = last_record[1]
+                    
+                    # その日の記録を文字列化
+                    record_str = ""
+                    for record_type, timestamp in records:
+                        time_only = timestamp.split()[1][:5] if ' ' in timestamp else timestamp[:5]  # HH:MM形式
+                        action = "出" if record_type == "IN" else "退"
+                        record_str += f"{action}:{time_only} "
+                    
+                    # 各列の表示幅を調整
+                    padded_name = self.pad_string(name, 15)
+                    padded_status = self.pad_string(status, 10)
+                    padded_time = self.pad_string(last_time, 20)
+                    
+                    print(f"{padded_name} {padded_status} {padded_time} {record_str}")
+                
+                print(f"\n{date_input} に打刻した講師数: {len(instructor_records)}人")
+            else:
+                print(f"{date_input} の記録はありません。")
+                
+        except Exception as e:
+            print(f"指定日付のサマリー取得エラー: {e}")
+    
+    def get_display_width(self, text):
+        """文字列の表示幅を計算（日本語文字は2文字分、半角文字は1文字分）"""
+        width = 0
+        for char in text:
+            # 日本語文字（ひらがな、カタカナ、漢字、全角記号など）は2文字分
+            if ord(char) > 127:  # ASCII文字以外
+                width += 2
+            else:
+                width += 1
+        return width
+    
+    def pad_string(self, text, target_width):
+        """文字列を指定した表示幅になるように半角スペースでパディング"""
+        current_width = self.get_display_width(text)
+        if current_width < target_width:
+            return text + " " * (target_width - current_width)
+        return text
+    
     def show_today_summary(self):
         """今日の出退勤状況サマリー"""
         try:
@@ -370,7 +519,11 @@ class AttendanceSystemCSV:
                     instructor_records[name].append((record_type, timestamp))
                 
                 print("\n=== 今日の出退勤状況サマリー ===")
-                print(f"{'講師名':<15} {'状態':<8} {'最終打刻時刻':<20} {'今日の記録'}")
+                # ヘッダーの表示幅を調整
+                header_name = self.pad_string("講師名", 15)
+                header_status = self.pad_string("状態", 8)
+                header_time = self.pad_string("最終打刻時刻", 20)
+                print(f"{header_name} {header_status} {header_time} 今日の記録")
                 print("-" * 70)
                 
                 for name, records in instructor_records.items():
@@ -385,7 +538,12 @@ class AttendanceSystemCSV:
                         action = "出" if record_type == "IN" else "退"
                         record_str += f"{action}:{time_only} "
                     
-                    print(f"{name:<15} {status:<8} {last_time:<20} {record_str}")
+                    # 各列の表示幅を調整
+                    padded_name = self.pad_string(name, 15)
+                    padded_status = self.pad_string(status, 8)
+                    padded_time = self.pad_string(last_time, 20)
+                    
+                    print(f"{padded_name} {padded_status} {padded_time} {record_str}")
                 
                 print(f"\n今日打刻した講師数: {len(instructor_records)}人")
             else:
@@ -393,6 +551,160 @@ class AttendanceSystemCSV:
                 
         except Exception as e:
             print(f"今日のサマリー取得エラー: {e}")
+    
+    def export_today_records_to_csv(self):
+        """今日の打刻記録をCSVファイルにエクスポート"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 今日の日付を取得
+            today = datetime.now(JST).strftime("%Y-%m-%d")
+            
+            cursor.execute('''
+                SELECT instructor_name, record_type, timestamp, card_uid
+                FROM time_records
+                WHERE DATE(timestamp) = DATE('now', 'localtime')
+                ORDER BY timestamp
+            ''')
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            if not results:
+                print("今日の打刻記録はありません。エクスポートできません。")
+                return
+            
+            # CSVファイル名を生成（重複回避のため連番を付ける）
+            csv_filename = self.generate_unique_csv_filename(today)
+            
+            # CSVファイルに書き込み
+            with open(csv_filename, 'w', newline='', encoding='utf-8-sig') as csvfile:
+                writer = csv.writer(csvfile)
+                
+                # ヘッダー行を書き込み
+                writer.writerow(['講師名', '打刻種別', '打刻日時', 'カードUID'])
+                
+                # データ行を書き込み
+                for name, record_type, timestamp, card_uid in results:
+                    # 打刻種別を日本語に変換
+                    record_type_jp = "出勤" if record_type == "IN" else "退勤"
+                    writer.writerow([name, record_type_jp, timestamp, card_uid])
+            
+            print(f"\n=== CSVエクスポート完了 ===")
+            print(f"ファイル名: {csv_filename}")
+            print(f"エクスポート件数: {len(results)}件")
+            print(f"対象日: {today}")
+            
+            # エクスポートしたデータの概要を表示
+            print(f"\n=== エクスポート内容概要 ===")
+            instructor_count = len(set(name for name, _, _, _ in results))
+            in_count = sum(1 for _, record_type, _, _ in results if record_type == "IN")
+            out_count = sum(1 for _, record_type, _, _ in results if record_type == "OUT")
+            
+            print(f"打刻した講師数: {instructor_count}人")
+            print(f"出勤記録: {in_count}件")
+            print(f"退勤記録: {out_count}件")
+            print(f"合計記録数: {len(results)}件")
+            
+        except Exception as e:
+            print(f"CSVエクスポートエラー: {e}")
+    
+    def generate_unique_csv_filename(self, date_str):
+        """重複しないCSVファイル名を生成"""
+        # logディレクトリを作成（存在しない場合）
+        log_dir = "log"
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+        
+        base_filename = f"attendance_records_{date_str}"
+        csv_filename = os.path.join(log_dir, f"{base_filename}.csv")
+        
+        # ファイルが存在しない場合はそのまま返す
+        if not os.path.exists(csv_filename):
+            return csv_filename
+        
+        # ファイルが存在する場合は連番を付ける
+        counter = 2
+        while True:
+            csv_filename = os.path.join(log_dir, f"{base_filename}_{counter}.csv")
+            if not os.path.exists(csv_filename):
+                return csv_filename
+            counter += 1
+    
+    def export_date_records_to_csv(self):
+        """特定の日付の打刻記録をCSVファイルにエクスポート"""
+        print("\n=== 特定の日付の打刻記録CSVエクスポート ===")
+        
+        # 日付入力
+        while True:
+            date_input = input("日付を入力してください (YYYY-MM-DD形式、例: 2025-01-15): ").strip()
+            
+            if not date_input:
+                print("日付の入力をキャンセルしました。")
+                return
+            
+            # 日付形式の検証
+            try:
+                # 日付の妥当性をチェック
+                datetime.strptime(date_input, "%Y-%m-%d")
+                break
+            except ValueError:
+                print("無効な日付形式です。YYYY-MM-DD形式で入力してください。")
+                continue
+        
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT instructor_name, record_type, timestamp, card_uid
+                FROM time_records
+                WHERE DATE(timestamp) = ?
+                ORDER BY timestamp
+            ''', (date_input,))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            if not results:
+                print(f"{date_input} の打刻記録はありません。エクスポートできません。")
+                return
+            
+            # CSVファイル名を生成（重複回避のため連番を付ける）
+            csv_filename = self.generate_unique_csv_filename(date_input)
+            
+            # CSVファイルに書き込み
+            with open(csv_filename, 'w', newline='', encoding='utf-8-sig') as csvfile:
+                writer = csv.writer(csvfile)
+                
+                # ヘッダー行を書き込み
+                writer.writerow(['講師名', '打刻種別', '打刻日時', 'カードUID'])
+                
+                # データ行を書き込み
+                for name, record_type, timestamp, card_uid in results:
+                    # 打刻種別を日本語に変換
+                    record_type_jp = "出勤" if record_type == "IN" else "退勤"
+                    writer.writerow([name, record_type_jp, timestamp, card_uid])
+            
+            print(f"\n=== CSVエクスポート完了 ===")
+            print(f"ファイル名: {csv_filename}")
+            print(f"エクスポート件数: {len(results)}件")
+            print(f"対象日: {date_input}")
+            
+            # エクスポートしたデータの概要を表示
+            print(f"\n=== エクスポート内容概要 ===")
+            instructor_count = len(set(name for name, _, _, _ in results))
+            in_count = sum(1 for _, record_type, _, _ in results if record_type == "IN")
+            out_count = sum(1 for _, record_type, _, _ in results if record_type == "OUT")
+            
+            print(f"打刻した講師数: {instructor_count}人")
+            print(f"出勤記録: {in_count}件")
+            print(f"退勤記録: {out_count}件")
+            print(f"合計記録数: {len(results)}件")
+            
+        except Exception as e:
+            print(f"CSVエクスポートエラー: {e}")
     
     def register_instructor_interactive(self):
         """インタラクティブな講師登録機能"""
@@ -656,11 +968,15 @@ def main():
         print("3. 講師一覧表示")
         print("4. 今日の打刻記録表示")
         print("5. 今日の出退勤状況サマリー")
-        print("6. 講師マスタCSVファイル確認")
-        print(f"7. 音声設定 (現在: {sound_status})")
-        print("8. 終了")
+        print("6. 特定の日付の打刻記録表示")
+        print("7. 特定の日付の出退勤状況サマリー")
+        print("8. 講師マスタCSVファイル確認")
+        print(f"9. 音声設定 (現在: {sound_status})")
+        print("10. 今日の打刻記録をCSVエクスポート")
+        print("11. 特定の日付の打刻記録をCSVエクスポート")
+        print("12. 終了")
         
-        choice = input("選択してください (1-8): ").strip()
+        choice = input("選択してください (1-12): ").strip()
         
         if choice == "1":
             try:
@@ -681,12 +997,24 @@ def main():
             system.show_today_summary()
             
         elif choice == "6":
-            system.edit_instructors_csv()
+            system.show_date_records()
             
         elif choice == "7":
-            system.toggle_sound()
+            system.show_date_summary()
             
         elif choice == "8":
+            system.edit_instructors_csv()
+            
+        elif choice == "9":
+            system.toggle_sound()
+            
+        elif choice == "10":
+            system.export_today_records_to_csv()
+            
+        elif choice == "11":
+            system.export_date_records_to_csv()
+            
+        elif choice == "12":
             print("システムを終了します。")
             break
             
