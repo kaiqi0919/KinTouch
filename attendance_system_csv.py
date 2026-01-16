@@ -6,6 +6,7 @@ import sqlite3
 import csv
 import os
 import winsound
+import shutil
 from datetime import datetime, timezone, timedelta
 from smartcard.System import readers
 from smartcard.util import toHexString
@@ -596,6 +597,9 @@ class AttendanceSystemCSV:
             print(f"エクスポート件数: {len(results)}件")
             print(f"対象日: {today}")
             
+            # NASへコピー
+            self.copy_to_nas(csv_filename)
+            
             # エクスポートしたデータの概要を表示
             print(f"\n=== エクスポート内容概要 ===")
             instructor_count = len(set(name for name, _, _, _ in results))
@@ -631,6 +635,32 @@ class AttendanceSystemCSV:
             if not os.path.exists(csv_filename):
                 return csv_filename
             counter += 1
+    
+    def copy_to_nas(self, csv_filename):
+        """CSVファイルをNASにコピー"""
+        nas_path = r"\\NASTokyo\◆東京講師\NASsetup\kintouch_log"
+        
+        try:
+            # NASパスが存在するか確認
+            if not os.path.exists(nas_path):
+                print(f"\n警告: NASパス '{nas_path}' にアクセスできません。")
+                print("ローカルのみに保存されました。")
+                return
+            
+            # ファイル名を取得
+            filename = os.path.basename(csv_filename)
+            nas_file_path = os.path.join(nas_path, filename)
+            
+            # NASにコピー
+            shutil.copy2(csv_filename, nas_file_path)
+            print(f"\nNASへのコピー完了: {nas_file_path}")
+            
+        except PermissionError:
+            print(f"\n警告: NASパス '{nas_path}' への書き込み権限がありません。")
+            print("ローカルのみに保存されました。")
+        except Exception as e:
+            print(f"\n警告: NASへのコピー中にエラーが発生しました: {e}")
+            print("ローカルのみに保存されました。")
     
     def export_date_records_to_csv(self):
         """特定の日付の打刻記録をCSVファイルにエクスポート"""
@@ -691,6 +721,9 @@ class AttendanceSystemCSV:
             print(f"ファイル名: {csv_filename}")
             print(f"エクスポート件数: {len(results)}件")
             print(f"対象日: {date_input}")
+            
+            # NASへコピー
+            self.copy_to_nas(csv_filename)
             
             # エクスポートしたデータの概要を表示
             print(f"\n=== エクスポート内容概要 ===")
