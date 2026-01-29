@@ -21,8 +21,16 @@ JST = timezone(timedelta(hours=9))
 class AttendanceSystemGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("出退勤管理システム")
-        self.root.geometry("600x500")
+        self.root.title("出退勤確認システム")
+        
+        # ウィンドウを画面中央に配置
+        window_width = 600
+        window_height = 500
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        center_x = int((screen_width - window_width) / 2)
+        center_y = int((screen_height - window_height) / 2)
+        self.root.geometry(f"{window_width}x{window_height}+{center_x}+{center_y}")
         
         # システムの初期化
         self.db_path = "attendance.db"
@@ -32,6 +40,7 @@ class AttendanceSystemGUI:
         self.connection = None
         self.last_uid = None
         self.monitoring = False
+        self.clear_timer_id = None  # 打刻情報クリア用タイマーID
         
         self.init_database()
         self.init_instructors_csv()
@@ -47,7 +56,7 @@ class AttendanceSystemGUI:
             widget.destroy()
         
         # タイトル
-        title_label = tk.Label(self.root, text="出退勤管理システム", font=("Arial", 20, "bold"))
+        title_label = tk.Label(self.root, text="出退勤確認システム", font=("Arial", 20, "bold"))
         title_label.pack(pady=20)
         
         # ボタンフレーム
@@ -105,7 +114,6 @@ class AttendanceSystemGUI:
         self.info_labels = {
             'instructor_id': tk.Label(info_frame, text="", font=("Arial", 16)),
             'name': tk.Label(info_frame, text="", font=("Arial", 20, "bold")),
-            'uid': tk.Label(info_frame, text="", font=("Arial", 12)),
             'timestamp': tk.Label(info_frame, text="", font=("Arial", 14)),
             'action': tk.Label(info_frame, text="", font=("Arial", 18, "bold"))
         }
@@ -190,17 +198,21 @@ class AttendanceSystemGUI:
             self.play_beep("error")
     
     def display_attendance_info(self, instructor_id, name, uid, timestamp, action, color, status_label):
-        """打刻情報を1秒間表示"""
+        """打刻情報を3秒間表示"""
+        # 前回のタイマーがあればキャンセル
+        if self.clear_timer_id is not None:
+            self.root.after_cancel(self.clear_timer_id)
+            self.clear_timer_id = None
+        
         status_label.config(text=f"{action}記録完了！", fg=color)
         
         self.info_labels['instructor_id'].config(text=f"講師番号: {instructor_id}")
         self.info_labels['name'].config(text=f"{name}")
-        self.info_labels['uid'].config(text=f"UID: {uid}")
         self.info_labels['timestamp'].config(text=f"{timestamp}")
         self.info_labels['action'].config(text=f"【{action}】", fg=color)
         
-        # 1秒後にクリア
-        self.root.after(1000, lambda: self.clear_attendance_info(status_label))
+        # 3秒後にクリア（タイマーIDを保存）
+        self.clear_timer_id = self.root.after(3000, lambda: self.clear_attendance_info(status_label))
     
     def clear_attendance_info(self, status_label):
         """打刻情報をクリア"""
@@ -559,10 +571,17 @@ class AttendanceSystemGUI:
         input_frame = tk.Frame(self.root)
         input_frame.pack(pady=20)
         
-        # 講師番号入力
-        tk.Label(input_frame, text="講師番号 (必須):", font=("Arial", 12)).grid(row=0, column=0, padx=10, pady=10, sticky='e')
-        instructor_id_entry = tk.Entry(input_frame, width=20, font=("Arial", 12))
-        instructor_id_entry.grid(row=0, column=1, padx=10, pady=10)
+        # 講師選択（ドロップダウン）
+        tk.Label(input_frame, text="講師選択 (必須):", font=("Arial", 12)).grid(row=0, column=0, padx=10, pady=10, sticky='e')
+        
+        # 講師一覧を取得
+        instructors = self.load_instructors_full()
+        instructor_options = [f"{inst['instructor_id']}: {inst['name']}" for inst in instructors]
+        
+        instructor_combo = ttk.Combobox(input_frame, values=instructor_options, width=28, font=("Arial", 11), state='readonly')
+        instructor_combo.grid(row=0, column=1, padx=10, pady=10)
+        if instructor_options:
+            instructor_combo.set("講師を選択してください")
         
         # 時刻入力
         tk.Label(input_frame, text="時刻 (YYYY-MM-DD HH:MM:SS):", font=("Arial", 12)).grid(row=1, column=0, padx=10, pady=10, sticky='e')
@@ -578,18 +597,19 @@ class AttendanceSystemGUI:
         
         def register_correction():
             """修正を登録"""
-            instructor_id = instructor_id_entry.get().strip()
+            selected = instructor_combo.get()
             time_str = time_entry.get().strip()
             record_type = record_type_var.get()
             
-            if not instructor_id:
-                messagebox.showerror("エラー", "講師番号を入力してください")
+            if not selected or selected == "講師を選択してください":
+                messagebox.showerror("エラー", "講師を選択してください")
                 return
             
+            # 選択された文字列から講師番号を抽出 ("123: 山田太郎" -> "123")
             try:
-                instructor_id = int(instructor_id)
-            except ValueError:
-                messagebox.showerror("エラー", "講師番号は数値で入力してください")
+                instructor_id = int(selected.split(':')[0])
+            except (ValueError, IndexError):
+                messagebox.showerror("エラー", "講師の選択が正しくありません")
                 return
             
             # 講師情報取得
@@ -618,7 +638,7 @@ class AttendanceSystemGUI:
                                            timestamp):
                 action = "出勤" if record_type == "IN" else "退勤"
                 messagebox.showinfo("成功", f"{instructor_info['name']} さんの{action}を記録しました\n時刻: {timestamp}")
-                instructor_id_entry.delete(0, tk.END)
+                instructor_combo.set("講師を選択してください")
                 time_entry.delete(0, tk.END)
             else:
                 messagebox.showerror("エラー", "記録に失敗しました")
@@ -696,6 +716,9 @@ class AttendanceSystemGUI:
         # テスト音を再生
         if self.sound_enabled:
             self.play_beep("success")
+        
+        # メニュー画面を再表示して音量設定表示を更新
+        self.show_menu()
     
     def exit_app(self):
         """アプリケーション終了"""
@@ -1045,7 +1068,7 @@ class AttendanceSystemGUI:
             return f"CSVエクスポートエラー: {e}"
     
     def generate_unique_csv_filename(self, date_str):
-        """重複しないCSVファイル名を生成"""
+        """CSVファイル名を生成（既存ファイルはタイムスタンプでリネーム）"""
         log_dir = "log"
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
@@ -1053,15 +1076,29 @@ class AttendanceSystemGUI:
         base_filename = f"attendance_records_{date_str}"
         csv_filename = os.path.join(log_dir, f"{base_filename}.csv")
         
-        if not os.path.exists(csv_filename):
-            return csv_filename
+        # ファイルが既に存在する場合、タイムスタンプ付きでリネーム
+        if os.path.exists(csv_filename):
+            # ファイルの最終更新時刻を取得
+            file_mtime = os.path.getmtime(csv_filename)
+            file_datetime = datetime.fromtimestamp(file_mtime)
+            timestamp_str = file_datetime.strftime("%H%M%S")
+            
+            # 新しいファイル名（タイムスタンプ付き）
+            old_filename = os.path.join(log_dir, f"{base_filename}_{timestamp_str}.csv")
+            
+            # 同名ファイルが存在する場合はさらにカウンターを追加
+            if os.path.exists(old_filename):
+                counter = 2
+                while True:
+                    old_filename = os.path.join(log_dir, f"{base_filename}_{timestamp_str}_{counter}.csv")
+                    if not os.path.exists(old_filename):
+                        break
+                    counter += 1
+            
+            # 既存ファイルをリネーム
+            os.rename(csv_filename, old_filename)
         
-        counter = 2
-        while True:
-            csv_filename = os.path.join(log_dir, f"{base_filename}_{counter}.csv")
-            if not os.path.exists(csv_filename):
-                return csv_filename
-            counter += 1
+        return csv_filename
     
     def copy_to_nas(self, csv_filename):
         """NASへコピー"""
