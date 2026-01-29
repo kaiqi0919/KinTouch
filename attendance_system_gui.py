@@ -1068,15 +1068,20 @@ class AttendanceSystemGUI:
             return f"CSVエクスポートエラー: {e}"
     
     def generate_unique_csv_filename(self, date_str):
-        """CSVファイル名を生成（既存ファイルはタイムスタンプでリネーム）"""
+        """CSVファイル名を生成（既存ファイルはoldフォルダに移動してタイムスタンプでリネーム）"""
         log_dir = "log"
+        old_dir = "old"
+        
+        # ディレクトリが存在しない場合は作成
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
+        if not os.path.exists(old_dir):
+            os.makedirs(old_dir)
         
         base_filename = f"attendance_records_{date_str}"
         csv_filename = os.path.join(log_dir, f"{base_filename}.csv")
         
-        # ファイルが既に存在する場合、タイムスタンプ付きでリネーム
+        # ファイルが既に存在する場合、oldフォルダに移動してタイムスタンプでリネーム
         if os.path.exists(csv_filename):
             # ファイルの最終更新時刻を取得
             file_mtime = os.path.getmtime(csv_filename)
@@ -1084,34 +1089,43 @@ class AttendanceSystemGUI:
             timestamp_str = file_datetime.strftime("%H%M%S")
             
             # 新しいファイル名（タイムスタンプ付き）
-            old_filename = os.path.join(log_dir, f"{base_filename}_{timestamp_str}.csv")
+            old_filename = os.path.join(old_dir, f"{base_filename}_{timestamp_str}.csv")
             
             # 同名ファイルが存在する場合はさらにカウンターを追加
             if os.path.exists(old_filename):
                 counter = 2
                 while True:
-                    old_filename = os.path.join(log_dir, f"{base_filename}_{timestamp_str}_{counter}.csv")
+                    old_filename = os.path.join(old_dir, f"{base_filename}_{timestamp_str}_{counter}.csv")
                     if not os.path.exists(old_filename):
                         break
                     counter += 1
             
-            # 既存ファイルをリネーム
-            os.rename(csv_filename, old_filename)
+            # 既存ファイルをoldフォルダに移動
+            shutil.move(csv_filename, old_filename)
         
         return csv_filename
     
     def copy_to_nas(self, csv_filename):
-        """NASへコピー（既存ファイルはタイムスタンプでリネーム）"""
-        nas_path = r"\\NASTokyo\◆東京講師\NASsetup\kintouch_log"
+        """NASへコピー（既存ファイルはoldフォルダに移動してタイムスタンプでリネーム）"""
+        nas_log_path = r"\\NASTokyo\勤怠管理\KinTouch\log"
+        nas_old_path = r"\\NASTokyo\勤怠管理\KinTouch\old"
         
         try:
-            if not os.path.exists(nas_path):
-                return f"警告: NASパス '{nas_path}' にアクセスできません。\nローカルのみに保存されました。"
+            # NASパスの存在確認
+            if not os.path.exists(nas_log_path):
+                return f"警告: NASパス '{nas_log_path}' にアクセスできません。\nローカルのみに保存されました。"
+            
+            # oldフォルダが存在しない場合は作成
+            if not os.path.exists(nas_old_path):
+                try:
+                    os.makedirs(nas_old_path)
+                except Exception as e:
+                    return f"警告: oldフォルダの作成に失敗しました: {e}\nローカルのみに保存されました。"
             
             filename = os.path.basename(csv_filename)
-            nas_file_path = os.path.join(nas_path, filename)
+            nas_file_path = os.path.join(nas_log_path, filename)
             
-            # NAS上に既存ファイルがある場合はタイムスタンプ付きでリネーム
+            # NAS上に既存ファイルがある場合はoldフォルダに移動してタイムスタンプでリネーム
             if os.path.exists(nas_file_path):
                 # 既存ファイルの最終更新時刻を取得
                 file_mtime = os.path.getmtime(nas_file_path)
@@ -1124,27 +1138,27 @@ class AttendanceSystemGUI:
                 
                 # タイムスタンプ付きの新しいファイル名
                 old_nas_filename = f"{base_name}_{timestamp_str}.csv"
-                old_nas_file_path = os.path.join(nas_path, old_nas_filename)
+                old_nas_file_path = os.path.join(nas_old_path, old_nas_filename)
                 
                 # 同名ファイルが存在する場合はさらにカウンターを追加
                 if os.path.exists(old_nas_file_path):
                     counter = 2
                     while True:
                         old_nas_filename = f"{base_name}_{timestamp_str}_{counter}.csv"
-                        old_nas_file_path = os.path.join(nas_path, old_nas_filename)
+                        old_nas_file_path = os.path.join(nas_old_path, old_nas_filename)
                         if not os.path.exists(old_nas_file_path):
                             break
                         counter += 1
                 
-                # NAS上の既存ファイルをリネーム
-                os.rename(nas_file_path, old_nas_file_path)
+                # NAS上の既存ファイルをoldフォルダに移動
+                shutil.move(nas_file_path, old_nas_file_path)
             
             # 新しいファイルをNASにコピー
             shutil.copy2(csv_filename, nas_file_path)
             return f"NASへのコピー完了: {nas_file_path}"
             
         except PermissionError:
-            return f"警告: NASパス '{nas_path}' への書き込み権限がありません。\nローカルのみに保存されました。"
+            return f"警告: NASパスへの書き込み権限がありません。\nローカルのみに保存されました。"
         except Exception as e:
             return f"警告: NASへのコピー中にエラーが発生しました: {e}\nローカルのみに保存されました。"
     
