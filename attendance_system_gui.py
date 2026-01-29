@@ -33,8 +33,12 @@ class AttendanceSystemGUI:
         self.root.geometry(f"{window_width}x{window_height}+{center_x}+{center_y}")
         
         # システムの初期化
-        self.db_path = "attendance.db"
-        self.instructors_csv = "instructors.csv"
+        self.data_dir = "data"
+        if not os.path.exists(self.data_dir):
+            os.makedirs(self.data_dir)
+        
+        self.db_path = os.path.join(self.data_dir, "attendance.db")
+        self.instructors_csv = os.path.join(self.data_dir, "instructors.csv")
         self.sound_enabled = True
         self.reader = None
         self.connection = None
