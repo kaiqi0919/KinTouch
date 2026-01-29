@@ -1101,7 +1101,7 @@ class AttendanceSystemGUI:
         return csv_filename
     
     def copy_to_nas(self, csv_filename):
-        """NASへコピー"""
+        """NASへコピー（既存ファイルはタイムスタンプでリネーム）"""
         nas_path = r"\\NASTokyo\◆東京講師\NASsetup\kintouch_log"
         
         try:
@@ -1111,6 +1111,35 @@ class AttendanceSystemGUI:
             filename = os.path.basename(csv_filename)
             nas_file_path = os.path.join(nas_path, filename)
             
+            # NAS上に既存ファイルがある場合はタイムスタンプ付きでリネーム
+            if os.path.exists(nas_file_path):
+                # 既存ファイルの最終更新時刻を取得
+                file_mtime = os.path.getmtime(nas_file_path)
+                file_datetime = datetime.fromtimestamp(file_mtime)
+                timestamp_str = file_datetime.strftime("%H%M%S")
+                
+                # ベースファイル名から日付部分を抽出
+                # 例: "attendance_records_2026-01-29.csv" -> "attendance_records_2026-01-29"
+                base_name = os.path.splitext(filename)[0]
+                
+                # タイムスタンプ付きの新しいファイル名
+                old_nas_filename = f"{base_name}_{timestamp_str}.csv"
+                old_nas_file_path = os.path.join(nas_path, old_nas_filename)
+                
+                # 同名ファイルが存在する場合はさらにカウンターを追加
+                if os.path.exists(old_nas_file_path):
+                    counter = 2
+                    while True:
+                        old_nas_filename = f"{base_name}_{timestamp_str}_{counter}.csv"
+                        old_nas_file_path = os.path.join(nas_path, old_nas_filename)
+                        if not os.path.exists(old_nas_file_path):
+                            break
+                        counter += 1
+                
+                # NAS上の既存ファイルをリネーム
+                os.rename(nas_file_path, old_nas_file_path)
+            
+            # 新しいファイルをNASにコピー
             shutil.copy2(csv_filename, nas_file_path)
             return f"NASへのコピー完了: {nas_file_path}"
             
