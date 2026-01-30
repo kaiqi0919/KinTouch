@@ -1047,9 +1047,6 @@ class AttendanceSystemGUI:
                     record_type_jp = "出勤" if record_type == "IN" else "退勤"
                     writer.writerow([name, record_type_jp, timestamp, card_uid])
             
-            # NASへコピー
-            nas_result = self.copy_to_nas(csv_filename)
-            
             # 統計情報
             instructor_count = len(set(name for name, _, _, _ in results))
             in_count = sum(1 for _, record_type, _, _ in results if record_type == "IN")
@@ -1063,8 +1060,7 @@ class AttendanceSystemGUI:
             result += f"打刻した講師数: {instructor_count}人\n"
             result += f"出勤記録: {in_count}件\n"
             result += f"退勤記録: {out_count}件\n"
-            result += f"合計記録数: {len(results)}件\n\n"
-            result += nas_result
+            result += f"合計記録数: {len(results)}件\n"
             
             return result
             
@@ -1109,62 +1105,6 @@ class AttendanceSystemGUI:
         
         return csv_filename
     
-    def copy_to_nas(self, csv_filename):
-        """NASへコピー（既存ファイルはoldフォルダに移動してタイムスタンプでリネーム）"""
-        nas_log_path = r"\\NASTokyo\勤怠管理\KinTouch\log"
-        nas_old_path = r"\\NASTokyo\勤怠管理\KinTouch\old"
-        
-        try:
-            # NASパスの存在確認
-            if not os.path.exists(nas_log_path):
-                return f"警告: NASパス '{nas_log_path}' にアクセスできません。\nローカルのみに保存されました。"
-            
-            # oldフォルダが存在しない場合は作成
-            if not os.path.exists(nas_old_path):
-                try:
-                    os.makedirs(nas_old_path)
-                except Exception as e:
-                    return f"警告: oldフォルダの作成に失敗しました: {e}\nローカルのみに保存されました。"
-            
-            filename = os.path.basename(csv_filename)
-            nas_file_path = os.path.join(nas_log_path, filename)
-            
-            # NAS上に既存ファイルがある場合はoldフォルダに移動してタイムスタンプでリネーム
-            if os.path.exists(nas_file_path):
-                # 既存ファイルの最終更新時刻を取得
-                file_mtime = os.path.getmtime(nas_file_path)
-                file_datetime = datetime.fromtimestamp(file_mtime)
-                timestamp_str = file_datetime.strftime("%H%M%S")
-                
-                # ベースファイル名から日付部分を抽出
-                # 例: "attendance_records_2026-01-29.csv" -> "attendance_records_2026-01-29"
-                base_name = os.path.splitext(filename)[0]
-                
-                # タイムスタンプ付きの新しいファイル名
-                old_nas_filename = f"{base_name}_{timestamp_str}.csv"
-                old_nas_file_path = os.path.join(nas_old_path, old_nas_filename)
-                
-                # 同名ファイルが存在する場合はさらにカウンターを追加
-                if os.path.exists(old_nas_file_path):
-                    counter = 2
-                    while True:
-                        old_nas_filename = f"{base_name}_{timestamp_str}_{counter}.csv"
-                        old_nas_file_path = os.path.join(nas_old_path, old_nas_filename)
-                        if not os.path.exists(old_nas_file_path):
-                            break
-                        counter += 1
-                
-                # NAS上の既存ファイルをoldフォルダに移動
-                shutil.move(nas_file_path, old_nas_file_path)
-            
-            # 新しいファイルをNASにコピー
-            shutil.copy2(csv_filename, nas_file_path)
-            return f"NASへのコピー完了: {nas_file_path}"
-            
-        except PermissionError:
-            return f"警告: NASパスへの書き込み権限がありません。\nローカルのみに保存されました。"
-        except Exception as e:
-            return f"警告: NASへのコピー中にエラーが発生しました: {e}\nローカルのみに保存されました。"
     
     # ===== カードリーダー関連メソッド =====
     
