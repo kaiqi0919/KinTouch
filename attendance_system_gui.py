@@ -1068,18 +1068,23 @@ class AttendanceSystemGUI:
             return f"CSVエクスポートエラー: {e}"
     
     def generate_unique_csv_filename(self, date_str):
-        """CSVファイル名を生成（既存ファイルはoldフォルダに移動してタイムスタンプでリネーム）"""
+        """CSVファイル名を生成（月ごとのフォルダに保存、既存ファイルはoldフォルダに移動）"""
+        # 日付から年月を抽出 (YYYY-MM-DD -> YYYY-MM)
+        year_month = date_str[:7]  # "2026-01-29" -> "2026-01"
+        
+        # ディレクトリ構造: log/YYYY-MM/
         log_dir = "log"
-        old_dir = "old"
+        month_dir = os.path.join(log_dir, year_month)
+        old_dir = os.path.join(month_dir, "old")
         
         # ディレクトリが存在しない場合は作成
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+        if not os.path.exists(month_dir):
+            os.makedirs(month_dir)
         if not os.path.exists(old_dir):
             os.makedirs(old_dir)
         
         base_filename = f"attendance_records_{date_str}"
-        csv_filename = os.path.join(log_dir, f"{base_filename}.csv")
+        csv_filename = os.path.join(month_dir, f"{base_filename}.csv")
         
         # ファイルが既に存在する場合、oldフォルダに移動してタイムスタンプでリネーム
         if os.path.exists(csv_filename):
