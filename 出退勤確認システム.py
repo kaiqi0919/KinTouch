@@ -11,6 +11,7 @@ import winsound
 import shutil
 import threading
 import json
+import hashlib
 from datetime import datetime, timezone, timedelta
 from smartcard.System import readers
 from smartcard.util import toHexString
@@ -18,6 +19,9 @@ from smartcard.Exceptions import CardConnectionException, NoCardException
 
 # 日本時間のタイムゾーン設定
 JST = timezone(timedelta(hours=9))
+
+# パスワードのハッシュ値（SHA-256）
+PASSWORD_HASH = "944381cba581a7ee3f59b5e2a97686c9b48fc0b7da14eb3fceff5f84f62d0ff7"
 
 class AttendanceSystemGUI:
     def __init__(self, root):
@@ -895,9 +899,13 @@ class AttendanceSystemGUI:
         # パスワード入力ダイアログ
         password = simpledialog.askstring("パスワード入力", "パスワードを入力してください:", show='*')
         
-        if password != "vgu2H8":
-            if password is not None:
-                messagebox.showerror("エラー", "パスワードが正しくありません")
+        # パスワードをハッシュ化して検証
+        if password is None:
+            return
+        
+        password_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
+        if password_hash != PASSWORD_HASH:
+            messagebox.showerror("エラー", "パスワードが正しくありません")
             return
         
         # 既存のウィジェットをクリア
