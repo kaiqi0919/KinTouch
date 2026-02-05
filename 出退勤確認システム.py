@@ -576,9 +576,9 @@ class AttendanceSystemGUI:
         
         def register():
             """登録実行"""
-            uid = uid_entry.get()
-            instructor_id = id_entry.get()
-            name = name_entry.get()
+            uid = uid_entry.get().strip()
+            instructor_id = id_entry.get().strip()
+            name = name_entry.get().strip()
             
             if not uid:
                 messagebox.showerror("エラー", "カードをかざしてください")
@@ -1736,32 +1736,78 @@ class AttendanceSystemGUI:
             all_instructors = self.load_instructors_full()
             all_instructors_sorted = sorted(all_instructors, key=lambda x: int(x['instructor_id']))
             
-            # CSVファイルに書き込み
+            # まとめCSVファイルに書き込み（全講師の日次データを連結）
+            import calendar
+            year, month = map(int, month_str.split('-'))
+            _, last_day = calendar.monthrange(year, month)
+            
+            # 各講師の日次データを取得
+            conn_daily = sqlite3.connect(self.db_path)
+            cursor_daily = conn_daily.cursor()
+            
             with open(csv_filename, 'w', newline='', encoding='utf-8-sig') as csvfile:
                 writer = csv.writer(csvfile)
                 
-                # 会議用と授業用でヘッダーと出力内容を変える
-                if table_name == "meeting_records":
-                    # 会議用は講師IDと会議回数のみ
-                    writer.writerow([f'【{table_type_prefix}用】講師ID', f'【{table_type_prefix}用】講師名', '会議回数'])
+                # ヘッダー行を書き込み
+                writer.writerow(['講師ID', '講師名', '日付', '出社時刻', '退社時刻', '外出時刻', '復帰時刻', '備考'])
+                
+                # すべての講師について日次データを出力
+                for instructor in all_instructors_sorted:
+                    instructor_id = instructor['instructor_id']
+                    instructor_name = instructor['name']
                     
-                    # すべての講師について出力（出勤記録がない講師も含む）
-                    for instructor in all_instructors_sorted:
-                        name = instructor['name']
-                        instructor_id = instructor['instructor_id']
-                        attendance_count = instructor_attendance.get(name, 0)
-                        writer.writerow([instructor_id, name, attendance_count])
-                else:
-                    # 授業用は講師ID、授業回数、授業時間数
-                    writer.writerow([f'【{table_type_prefix}用】講師ID', f'【{table_type_prefix}用】講師名', '授業回数', '授業時間数（3.25h）'])
+                    # 指定されたテーブルから打刻時刻を取得
+                    query_daily = f'''
+                        SELECT DATE(timestamp) as date, TIME(timestamp) as time
+                        FROM {table_name}
+                        WHERE instructor_id = ? AND strftime('%Y-%m', timestamp) = ?
+                        ORDER BY date, time
+                    '''
+                    cursor_daily.execute(query_daily, (instructor_id, month_str))
+                    records_daily = cursor_daily.fetchall()
                     
-                    # すべての講師について出力（出勤記録がない講師も含む）
-                    for instructor in all_instructors_sorted:
-                        name = instructor['name']
-                        instructor_id = instructor['instructor_id']
-                        attendance_count = instructor_attendance.get(name, 0)
-                        hours = attendance_count * 3.25
-                        writer.writerow([instructor_id, name, attendance_count, hours])
+                    # 日付ごとにデータを整理
+                    daily_data_per_instructor = {}
+                    for date_str, time_str in records_daily:
+                        if date_str not in daily_data_per_instructor:
+                            daily_data_per_instructor[date_str] = []
+                        daily_data_per_instructor[date_str].append(time_str)
+                    
+                    # 月の各日について出力
+                    for day in range(1, last_day + 1):
+                        date_obj = datetime(year, month, day)
+                        date_str = date_obj.strftime('%Y-%m-%d')
+                        
+                        # その日の打刻時刻を取得
+                        if date_str in daily_data_per_instructor:
+                            times = sorted(daily_data_per_instructor[date_str])
+                            start_time = times[0]   # 最も早い打刻
+                            end_time = times[-1]    # 最も遅い打刻
+                            
+                            writer.writerow([
+                                instructor_id,
+                                instructor_name,
+                                date_str,
+                                start_time,
+                                end_time,
+                                '',  # 外出時刻(空欄)
+                                '',  # 復帰時刻(空欄)
+                                ''   # 備考(空欄)
+                            ])
+                        else:
+                            # 打刻がない日は空欄
+                            writer.writerow([
+                                instructor_id,
+                                instructor_name,
+                                date_str,
+                                '',  # 出社時刻(空欄)
+                                '',  # 退社時刻(空欄)
+                                '',  # 外出時刻(空欄)
+                                '',  # 復帰時刻(空欄)
+                                ''   # 備考(空欄)
+                            ])
+            
+            conn_daily.close()
             
             # 統計情報
             total_instructors_registered = len(all_instructors_sorted)
@@ -1793,9 +1839,9 @@ class AttendanceSystemGUI:
                 instructor_id = instructor['instructor_id']
                 instructor_name = instructor['name']
                 
-                # 講師別日次集計ファイルを作成
+                # 講師別日次集計ファイルを作成（授業用 or 会議用）
                 individual_result = self.export_instructor_daily_summary(
-                    month_str, instructor_id, instructor_name, month_subdir
+                    month_str, instructor_id, instructor_name, month_subdir, table_name
                 )
                 if individual_result:
                     instructor_daily_count += 1
@@ -1935,8 +1981,8 @@ class AttendanceSystemGUI:
         except Exception as e:
             return f"統合月次集計エクスポートエラー: {e}"
     
-    def export_instructor_daily_summary(self, month_str, instructor_id, instructor_name, output_dir):
-        """講師別日次集計CSVエクスポート"""
+    def export_instructor_daily_summary(self, month_str, instructor_id, instructor_name, output_dir, table_name="time_records"):
+        """講師別日次集計CSVエクスポート（授業用または会議用）"""
         try:
             import calendar
             
@@ -1944,32 +1990,34 @@ class AttendanceSystemGUI:
             year, month = map(int, month_str.split('-'))
             _, last_day = calendar.monthrange(year, month)
             
-            # データベースから授業と会議の記録を取得
+            # データベースから打刻記録を取得（授業用 or 会議用）
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # 授業記録（1日1回まで）
-            class_query = '''
-                SELECT DISTINCT DATE(timestamp) as date
-                FROM time_records
+            # 指定されたテーブルから打刻時刻を取得
+            query = f'''
+                SELECT DATE(timestamp) as date, TIME(timestamp) as time
+                FROM {table_name}
                 WHERE instructor_id = ? AND strftime('%Y-%m', timestamp) = ?
+                ORDER BY date, time
             '''
-            cursor.execute(class_query, (instructor_id, month_str))
-            class_records = {row[0]: 1 for row in cursor.fetchall()}
-            
-            # 会議記録（1日1回まで）
-            meeting_query = '''
-                SELECT DISTINCT DATE(timestamp) as date
-                FROM meeting_records
-                WHERE instructor_id = ? AND strftime('%Y-%m', timestamp) = ?
-            '''
-            cursor.execute(meeting_query, (instructor_id, month_str))
-            meeting_records = {row[0]: 1 for row in cursor.fetchall()}
+            cursor.execute(query, (instructor_id, month_str))
+            records = cursor.fetchall()
             
             conn.close()
             
+            # 日付ごとにデータを整理
+            daily_data = {}
+            for date_str, time_str in records:
+                if date_str not in daily_data:
+                    daily_data[date_str] = []
+                daily_data[date_str].append(time_str)
+            
+            # テーブルタイプに応じたファイル名プレフィックス
+            table_type_prefix = "授業" if table_name == "time_records" else "会議"
+            
             # CSVファイル名
-            base_filename = f"出退勤記録_{month_str}_{instructor_id}_{instructor_name}"
+            base_filename = f"【{table_type_prefix}】出退勤記録_{month_str}_{instructor_id}_{instructor_name}"
             csv_filename = os.path.join(output_dir, f"{base_filename}.csv")
             
             # 既存ファイルがある場合はoldフォルダに移動
@@ -1997,36 +2045,41 @@ class AttendanceSystemGUI:
             # CSVファイルに書き込み
             with open(csv_filename, 'w', newline='', encoding='utf-8-sig') as csvfile:
                 writer = csv.writer(csvfile)
-                writer.writerow(['日付', '曜日', '授業回数', '授業時間数(3.25h)', '会議回数', '出勤回数'])
+                writer.writerow(['講師ID', '講師名', '日付', '出社時刻', '退社時刻', '外出時刻', '復帰時刻', '備考'])
                 
                 # 月の各日について出力
                 for day in range(1, last_day + 1):
                     date_obj = datetime(year, month, day)
                     date_str = date_obj.strftime('%Y-%m-%d')
-                    date_display = date_obj.strftime('%Y/%m/%d').lstrip('0').replace('/0', '/')
                     
-                    # 曜日を取得
-                    weekday_names = ['月', '火', '水', '木', '金', '土', '日']
-                    weekday = weekday_names[date_obj.weekday()]
-                    
-                    # 授業回数と会議回数
-                    class_count = class_records.get(date_str, 0)
-                    meeting_count = meeting_records.get(date_str, 0)
-                    
-                    # 授業時間数（回数 × 3.25）
-                    class_hours = class_count * 3.25 if class_count > 0 else 0
-                    
-                    # 出勤回数（授業 OR 会議、1日1回まで）
-                    total_attendance = 1 if (class_count > 0 or meeting_count > 0) else 0
-                    
-                    writer.writerow([
-                        date_display,
-                        weekday,
-                        class_count,
-                        class_hours,
-                        meeting_count,
-                        total_attendance
-                    ])
+                    # その日の打刻時刻を取得
+                    if date_str in daily_data:
+                        times = sorted(daily_data[date_str])
+                        start_time = times[0]   # 最も早い打刻
+                        end_time = times[-1]    # 最も遅い打刻
+                        
+                        writer.writerow([
+                            instructor_id,
+                            instructor_name,
+                            date_str,
+                            start_time,
+                            end_time,
+                            '',  # 外出時刻(空欄)
+                            '',  # 復帰時刻(空欄)
+                            ''   # 備考(空欄)
+                        ])
+                    else:
+                        # 打刻がない日は空欄
+                        writer.writerow([
+                            instructor_id,
+                            instructor_name,
+                            date_str,
+                            '',  # 出社時刻(空欄)
+                            '',  # 退社時刻(空欄)
+                            '',  # 外出時刻(空欄)
+                            '',  # 復帰時刻(空欄)
+                            ''   # 備考(空欄)
+                        ])
             
             return True
             
