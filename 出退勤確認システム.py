@@ -43,7 +43,6 @@ class AttendanceSystemGUI:
             os.makedirs(self.data_dir)
         
         self.db_path = os.path.join(self.data_dir, "attendance.db")
-        self.instructors_csv = os.path.join(self.data_dir, "instructors.csv")
         self.config_path = "reader_config.json"
         self.sound_enabled = True
         
@@ -59,7 +58,6 @@ class AttendanceSystemGUI:
         self.clear_timer_meeting = None
         
         self.init_database()
-        self.init_instructors_csv()
         
         # 設定の読み込みと初期化
         if not self.load_config():
@@ -1294,45 +1292,66 @@ class AttendanceSystemGUI:
                     )
                 ''')
             
+            # instructors テーブル（講師マスタ）
+            cursor.execute("PRAGMA table_info(instructors)")
+            instructors_columns = cursor.fetchall()
+            
+            if not instructors_columns:
+                cursor.execute('''
+                    CREATE TABLE instructors (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        instructor_id INTEGER UNIQUE NOT NULL,
+                        card_uid TEXT UNIQUE NOT NULL,
+                        name TEXT NOT NULL,
+                        created_at TIMESTAMP NOT NULL
+                    )
+                ''')
+            
             conn.commit()
             conn.close()
             
         except Exception as e:
             print(f"データベース初期化エラー: {e}")
     
-    def init_instructors_csv(self):
-        """講師マスタCSV初期化"""
-        if not os.path.exists(self.instructors_csv):
-            try:
-                with open(self.instructors_csv, 'w', newline='', encoding='utf-8') as csvfile:
-                    writer = csv.writer(csvfile)
-                    writer.writerow(["instructor_id", "card_uid", "name", "created_at"])
-            except Exception as e:
-                print(f"講師マスタCSV初期化エラー: {e}")
-    
     def load_instructors(self):
-        """CSVから講師データ読み込み（UID→名前の辞書）"""
+        """DBから講師データ読み込み（UID→名前の辞書）"""
         instructors = {}
         try:
-            if os.path.exists(self.instructors_csv):
-                with open(self.instructors_csv, 'r', encoding='utf-8') as csvfile:
-                    reader = csv.DictReader(csvfile)
-                    for row in reader:
-                        instructors[row['card_uid']] = row['name']
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT card_uid, name FROM instructors")
+            for card_uid, name in cursor.fetchall():
+                instructors[card_uid] = name
+            
+            conn.close()
             return instructors
         except Exception as e:
             print(f"講師データ読み込みエラー: {e}")
             return {}
     
     def load_instructors_full(self):
-        """CSVから講師データ読み込み（全情報）"""
+        """DBから講師データ読み込み（全情報）"""
         instructors = []
         try:
-            if os.path.exists(self.instructors_csv):
-                with open(self.instructors_csv, 'r', encoding='utf-8') as csvfile:
-                    reader = csv.DictReader(csvfile)
-                    for row in reader:
-                        instructors.append(row)
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT instructor_id, card_uid, name, created_at
+                FROM instructors
+                ORDER BY instructor_id
+            """)
+            
+            for instructor_id, card_uid, name, created_at in cursor.fetchall():
+                instructors.append({
+                    'instructor_id': str(instructor_id),
+                    'card_uid': card_uid,
+                    'name': name,
+                    'created_at': created_at
+                })
+            
+            conn.close()
             return instructors
         except Exception as e:
             print(f"講師データ読み込みエラー: {e}")
@@ -1341,19 +1360,15 @@ class AttendanceSystemGUI:
     def get_next_instructor_id(self):
         """次の講師番号を取得"""
         try:
-            if not os.path.exists(self.instructors_csv):
-                return 1
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
             
-            with open(self.instructors_csv, 'r', encoding='utf-8') as csvfile:
-                reader = csv.DictReader(csvfile)
-                max_id = 0
-                for row in reader:
-                    try:
-                        instructor_id = int(row['instructor_id'])
-                        max_id = max(max_id, instructor_id)
-                    except (ValueError, KeyError):
-                        continue
-                return max_id + 1
+            cursor.execute("SELECT MAX(instructor_id) FROM instructors")
+            result = cursor.fetchone()
+            conn.close()
+            
+            max_id = result[0] if result[0] is not None else 0
+            return max_id + 1
         except Exception as e:
             print(f"講師番号取得エラー: {e}")
             return 1
@@ -1361,18 +1376,24 @@ class AttendanceSystemGUI:
     def get_instructor_info_by_uid(self, card_uid):
         """UIDから講師情報取得"""
         try:
-            if not os.path.exists(self.instructors_csv):
-                return None
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
             
-            with open(self.instructors_csv, 'r', encoding='utf-8') as csvfile:
-                reader = csv.DictReader(csvfile)
-                for row in reader:
-                    if row['card_uid'] == card_uid:
-                        return {
-                            'instructor_id': row['instructor_id'],
-                            'name': row['name'],
-                            'card_uid': row['card_uid']
-                        }
+            cursor.execute("""
+                SELECT instructor_id, card_uid, name
+                FROM instructors
+                WHERE card_uid = ?
+            """, (card_uid,))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                return {
+                    'instructor_id': result[0],
+                    'card_uid': result[1],
+                    'name': result[2]
+                }
             return None
         except Exception as e:
             print(f"講師情報取得エラー: {e}")
@@ -1381,18 +1402,24 @@ class AttendanceSystemGUI:
     def get_instructor_info_by_id(self, instructor_id):
         """講師番号から講師情報取得"""
         try:
-            if not os.path.exists(self.instructors_csv):
-                return None
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
             
-            with open(self.instructors_csv, 'r', encoding='utf-8') as csvfile:
-                reader = csv.DictReader(csvfile)
-                for row in reader:
-                    if int(row['instructor_id']) == instructor_id:
-                        return {
-                            'instructor_id': row['instructor_id'],
-                            'name': row['name'],
-                            'card_uid': row['card_uid']
-                        }
+            cursor.execute("""
+                SELECT instructor_id, card_uid, name
+                FROM instructors
+                WHERE instructor_id = ?
+            """, (instructor_id,))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                return {
+                    'instructor_id': str(result[0]),
+                    'card_uid': result[1],
+                    'name': result[2]
+                }
             return None
         except Exception as e:
             print(f"講師情報取得エラー: {e}")
@@ -1401,19 +1428,30 @@ class AttendanceSystemGUI:
     def add_instructor_with_id(self, instructor_id, card_uid, name):
         """講師を指定IDで追加"""
         try:
-            instructors = self.load_instructors()
-            if card_uid in instructors:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 重複チェック
+            cursor.execute("SELECT instructor_id FROM instructors WHERE card_uid = ?", (card_uid,))
+            if cursor.fetchone():
+                conn.close()
                 return False
             
-            with open(self.instructors_csv, 'a', newline='', encoding='utf-8') as csvfile:
-                writer = csv.writer(csvfile)
-                created_at = datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
-                writer.writerow([instructor_id, card_uid, name, created_at])
+            # 挿入
+            created_at = datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute("""
+                INSERT INTO instructors (instructor_id, card_uid, name, created_at)
+                VALUES (?, ?, ?, ?)
+            """, (instructor_id, card_uid, name, created_at))
             
+            conn.commit()
+            conn.close()
             return True
             
         except Exception as e:
             print(f"講師登録エラー: {e}")
+            if 'conn' in locals():
+                conn.close()
             return False
     
     def get_last_record(self, card_uid, table_name="time_records"):
