@@ -71,6 +71,21 @@ class DatabaseManager:
                     )
                 ''')
             
+            # master_keys テーブル（マスターキーカード管理）
+            cursor.execute("PRAGMA table_info(master_keys)")
+            master_keys_columns = cursor.fetchall()
+            
+            if not master_keys_columns:
+                cursor.execute('''
+                    CREATE TABLE master_keys (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        card_uid TEXT UNIQUE NOT NULL,
+                        description TEXT,
+                        created_at TIMESTAMP NOT NULL,
+                        is_active INTEGER DEFAULT 1
+                    )
+                ''')
+            
             conn.commit()
             conn.close()
             
@@ -294,6 +309,28 @@ class DatabaseManager:
             print(f"記録取得エラー: {e}")
             return []
     
+    def get_date_records_by_uid(self, card_uid, date_str, table_name="time_records"):
+        """特定のUIDとその日の打刻記録を取得"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            query = f'''
+                SELECT record_type, timestamp 
+                FROM {table_name}
+                WHERE card_uid = ? AND DATE(timestamp) = ?
+                ORDER BY timestamp
+            '''
+            cursor.execute(query, (card_uid, date_str))
+            
+            results = cursor.fetchall()
+            conn.close()
+            return results
+            
+        except Exception as e:
+            print(f"UID別記録取得エラー: {e}")
+            return []
+    
     def get_date_summary(self, date_str, table_name="time_records"):
         """特定日付のサマリー取得"""
         try:
@@ -406,3 +443,132 @@ class DatabaseManager:
         except Exception as e:
             print(f"講師別記録取得エラー: {e}")
             return []
+    
+    def is_master_key(self, card_uid):
+        """マスターキーカードかどうかを確認"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT id FROM master_keys
+                WHERE card_uid = ? AND is_active = 1
+            """, (card_uid,))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            return result is not None
+        except Exception as e:
+            print(f"マスターキー確認エラー: {e}")
+            return False
+    
+    def add_master_key(self, card_uid, description=""):
+        """マスターキーカードを追加"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 重複チェック
+            cursor.execute("SELECT id FROM master_keys WHERE card_uid = ?", (card_uid,))
+            if cursor.fetchone():
+                conn.close()
+                return False
+            
+            # 挿入
+            created_at = datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute("""
+                INSERT INTO master_keys (card_uid, description, created_at, is_active)
+                VALUES (?, ?, ?, 1)
+            """, (card_uid, description, created_at))
+            
+            conn.commit()
+            conn.close()
+            return True
+            
+        except Exception as e:
+            print(f"マスターキー登録エラー: {e}")
+            if 'conn' in locals():
+                conn.close()
+            return False
+    
+    def get_master_keys(self):
+        """マスターキーカード一覧を取得"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT id, card_uid, description, created_at, is_active
+                FROM master_keys
+                ORDER BY created_at DESC
+            """)
+            
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    'id': row[0],
+                    'card_uid': row[1],
+                    'description': row[2],
+                    'created_at': row[3],
+                    'is_active': row[4]
+                })
+            
+            conn.close()
+            return results
+        except Exception as e:
+            print(f"マスターキー一覧取得エラー: {e}")
+            return []
+    
+    def delete_master_key(self, card_uid):
+        """マスターキーカードを削除"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("DELETE FROM master_keys WHERE card_uid = ?", (card_uid,))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"マスターキー削除エラー: {e}")
+            return False
+    
+    def get_date_records_with_id(self, date_str, table_name="time_records"):
+        """特定日付の打刻記録をIDつきで取得"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            query = f'''
+                SELECT id, instructor_name, record_type, timestamp 
+                FROM {table_name}
+                WHERE DATE(timestamp) = ?
+                ORDER BY timestamp DESC
+            '''
+            cursor.execute(query, (date_str,))
+            
+            results = cursor.fetchall()
+            conn.close()
+            return results
+            
+        except Exception as e:
+            print(f"記録取得エラー: {e}")
+            return []
+    
+    def delete_attendance_record(self, record_id, table_name="time_records"):
+        """打刻記録を削除"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            query = f"DELETE FROM {table_name} WHERE id = ?"
+            cursor.execute(query, (record_id,))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"打刻記録削除エラー: {e}")
+            return False

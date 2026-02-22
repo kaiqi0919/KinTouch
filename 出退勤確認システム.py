@@ -14,7 +14,7 @@ from datetime import datetime
 from modules import (
     JST, PASSWORD_HASH, DATA_DIR, CONFIG_PATH, WINDOW_WIDTH, WINDOW_HEIGHT,
     DatabaseManager, CardReaderManager, CSVExporter, MonthlyExporter,
-    ConfigManager, SoundManager
+    ConfigManager, SoundManager, CorrectionManager
 )
 
 class AttendanceSystemGUI:
@@ -40,6 +40,10 @@ class AttendanceSystemGUI:
         self.monthly_exporter = MonthlyExporter(self.db_manager, self.csv_exporter)
         self.config_manager = ConfigManager(CONFIG_PATH)
         self.sound_manager = SoundManager()
+        self.correction_manager = CorrectionManager(
+            self.root, self.db_manager, self.card_reader_manager, 
+            self.sound_manager, self.show_menu
+        )
         
         # 監視関連
         self.monitoring = False
@@ -81,13 +85,26 @@ class AttendanceSystemGUI:
             select_frame = tk.Frame(self.root)
             select_frame.pack(pady=20)
             
+            # Sony製リーダーを授業用に優先割り当て
+            sony_reader = None
+            other_reader = None
+            for name in reader_names:
+                if 'sony' in name.lower():
+                    sony_reader = name
+                else:
+                    other_reader = name
+            
+            # デフォルトの割り当て
+            default_class = sony_reader if sony_reader else reader_names[0]
+            default_meeting = other_reader if other_reader else (reader_names[1] if len(reader_names) > 1 else reader_names[0])
+            
             tk.Label(select_frame, text="授業用リーダー:", 
                     font=("Arial", 12)).grid(row=0, column=0, padx=10, pady=10, sticky='e')
             class_combo = ttk.Combobox(select_frame, values=reader_names, 
                                       width=40, font=("Arial", 10), state='readonly')
             class_combo.grid(row=0, column=1, padx=10, pady=10)
             if reader_names:
-                class_combo.set(reader_names[0])
+                class_combo.set(default_class)
             
             tk.Label(select_frame, text="会議用リーダー:", 
                     font=("Arial", 12)).grid(row=1, column=0, padx=10, pady=10, sticky='e')
@@ -95,7 +112,7 @@ class AttendanceSystemGUI:
                                         width=40, font=("Arial", 10), state='readonly')
             meeting_combo.grid(row=1, column=1, padx=10, pady=10)
             if len(reader_names) > 1:
-                meeting_combo.set(reader_names[1])
+                meeting_combo.set(default_meeting)
             
             def save_and_continue():
                 class_reader = class_combo.get()
@@ -185,7 +202,6 @@ class AttendanceSystemGUI:
         self.class_info_labels = {
             'instructor_id': tk.Label(class_info_frame, text="", font=("Arial", 14)),
             'name': tk.Label(class_info_frame, text="", font=("Arial", 18, "bold")),
-            'timestamp': tk.Label(class_info_frame, text="", font=("Arial", 12)),
             'action': tk.Label(class_info_frame, text="", font=("Arial", 16, "bold"))
         }
         
@@ -209,7 +225,6 @@ class AttendanceSystemGUI:
         self.meeting_info_labels = {
             'instructor_id': tk.Label(meeting_info_frame, text="", font=("Arial", 14)),
             'name': tk.Label(meeting_info_frame, text="", font=("Arial", 18, "bold")),
-            'timestamp': tk.Label(meeting_info_frame, text="", font=("Arial", 12)),
             'action': tk.Label(meeting_info_frame, text="", font=("Arial", 16, "bold"))
         }
         
@@ -234,6 +249,12 @@ class AttendanceSystemGUI:
     
     def monitor_cards(self, reader, status_label, reader_type):
         """カード監視スレッド"""
+        # リーダーが接続されていない場合は何もしない
+        if reader is None:
+            self.root.after(0, lambda: status_label.config(
+                text="リーダー未接続", fg="gray"))
+            return
+        
         connection = None
         last_uid = None
         
@@ -275,8 +296,13 @@ class AttendanceSystemGUI:
         
         table_name = "time_records" if reader_type == "class" else "meeting_records"
         
-        last_record = self.db_manager.get_last_record(uid, table_name)
-        if last_record is None or last_record["type"] == "OUT":
+        # その日の打刻回数を取得して判定
+        jst_now = datetime.now(JST)
+        today_str = jst_now.strftime("%Y-%m-%d")
+        today_records = self.db_manager.get_date_records_by_uid(uid, today_str, table_name)
+        
+        # 1回目の打刻は出勤、2回目以降は退勤
+        if len(today_records) == 0:
             record_type = "IN"
             action = "出勤"
             action_color = "green"
@@ -285,7 +311,6 @@ class AttendanceSystemGUI:
             action = "退勤"
             action_color = "orange"
         
-        jst_now = datetime.now(JST)
         timestamp_str = jst_now.strftime("%Y-%m-%d %H:%M:%S")
         
         if self.db_manager.record_attendance_to_db(uid, instructor_info['name'], 
@@ -322,7 +347,6 @@ class AttendanceSystemGUI:
         
         info_labels['instructor_id'].config(text=f"講師番号: {instructor_id}")
         info_labels['name'].config(text=f"{name}")
-        info_labels['timestamp'].config(text=f"{timestamp}")
         info_labels['action'].config(text=f"【{action}】", fg=color)
         
         new_timer_id = self.root.after(3000, lambda: self.clear_attendance_info(status_label, info_labels))
@@ -725,104 +749,9 @@ class AttendanceSystemGUI:
                  font=("Arial", 12)).pack(pady=10)
     
     def show_attendance_correction(self):
-        """打刻修正画面（パスワード認証付き）"""
-        password = simpledialog.askstring("パスワード入力", "パスワードを入力してください:", show='*')
-        
-        if password is None:
-            return
-        
-        password_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
-        if password_hash != PASSWORD_HASH:
-            messagebox.showerror("エラー", "パスワードが正しくありません")
-            return
-        
-        for widget in self.root.winfo_children():
-            widget.destroy()
-        
-        tk.Label(self.root, text="打刻修正", font=("Arial", 18, "bold")).pack(pady=20)
-        
-        input_frame = tk.Frame(self.root)
-        input_frame.pack(pady=20)
-        
-        tk.Label(input_frame, text="種別:", font=("Arial", 12)).grid(row=0, column=0, padx=10, pady=5, sticky='e')
-        table_var = tk.StringVar(value="time_records")
-        type_frame = tk.Frame(input_frame)
-        type_frame.grid(row=0, column=1, padx=10, pady=5, sticky='w')
-        tk.Radiobutton(type_frame, text="授業用", variable=table_var, 
-                      value="time_records", font=("Arial", 11)).pack(side=tk.LEFT)
-        tk.Radiobutton(type_frame, text="会議用", variable=table_var, 
-                      value="meeting_records", font=("Arial", 11)).pack(side=tk.LEFT)
-        
-        tk.Label(input_frame, text="講師選択 (必須):", font=("Arial", 12)).grid(row=1, column=0, padx=10, pady=10, sticky='e')
-        
-        instructors = self.db_manager.load_instructors_full()
-        instructor_options = [f"{inst['instructor_id']}: {inst['name']}" for inst in instructors]
-        
-        instructor_combo = ttk.Combobox(input_frame, values=instructor_options, width=28, font=("Arial", 11), state='readonly')
-        instructor_combo.grid(row=1, column=1, padx=10, pady=10)
-        if instructor_options:
-            instructor_combo.set("講師を選択してください")
-        
-        tk.Label(input_frame, text="時刻 (YYYY-MM-DD HH:MM:SS):", font=("Arial", 12)).grid(row=2, column=0, padx=10, pady=10, sticky='e')
-        tk.Label(input_frame, text="※空欄の場合は現在時刻", font=("Arial", 9), fg="gray").grid(row=3, column=1, sticky='w')
-        time_entry = tk.Entry(input_frame, width=30, font=("Arial", 12))
-        time_entry.grid(row=2, column=1, padx=10, pady=10)
-        
-        tk.Label(input_frame, text="打刻種別:", font=("Arial", 12)).grid(row=4, column=0, padx=10, pady=10, sticky='e')
-        record_type_var = tk.StringVar(value="IN")
-        tk.Radiobutton(input_frame, text="出勤", variable=record_type_var, value="IN", font=("Arial", 11)).grid(row=4, column=1, sticky='w')
-        tk.Radiobutton(input_frame, text="退勤", variable=record_type_var, value="OUT", font=("Arial", 11)).grid(row=5, column=1, sticky='w')
-        
-        def register_correction():
-            selected = instructor_combo.get()
-            time_str = time_entry.get().strip()
-            record_type = record_type_var.get()
-            table_name = table_var.get()
-            
-            if not selected or selected == "講師を選択してください":
-                messagebox.showerror("エラー", "講師を選択してください")
-                return
-            
-            try:
-                instructor_id = int(selected.split(':')[0])
-            except (ValueError, IndexError):
-                messagebox.showerror("エラー", "講師の選択が正しくありません")
-                return
-            
-            instructor_info = self.db_manager.get_instructor_info_by_id(instructor_id)
-            if not instructor_info:
-                messagebox.showerror("エラー", f"講師番号 {instructor_id} は登録されていません")
-                return
-            
-            if not time_str:
-                timestamp = datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
-            else:
-                try:
-                    datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-                    timestamp = time_str
-                except ValueError:
-                    messagebox.showerror("エラー", "時刻形式が正しくありません (YYYY-MM-DD HH:%M:%S)")
-                    return
-            
-            if self.db_manager.record_attendance_to_db(instructor_info['card_uid'], 
-                                           instructor_info['name'],
-                                           instructor_id,
-                                           record_type,
-                                           timestamp,
-                                           table_name):
-                action = "出勤" if record_type == "IN" else "退勤"
-                table_type = "授業用" if table_name == "time_records" else "会議用"
-                messagebox.showinfo("成功", f"{table_type}\n{instructor_info['name']} さんの{action}を記録しました\n時刻: {timestamp}")
-                instructor_combo.set("講師を選択してください")
-                time_entry.delete(0, tk.END)
-            else:
-                messagebox.showerror("エラー", "記録に失敗しました")
-        
-        tk.Button(self.root, text="登録", command=register_correction,
-                 font=("Arial", 14), bg="green", fg="white", width=15, height=2).pack(pady=20)
-        
-        tk.Button(self.root, text="戻る", command=self.show_menu,
-                 font=("Arial", 12)).pack(pady=10)
+        """打刻修正画面（CorrectionManagerに委譲）"""
+        self.correction_manager.show_attendance_correction()
+    
     
     def show_csv_export(self):
         """日次集計画面"""

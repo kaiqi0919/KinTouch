@@ -4,7 +4,7 @@
 SC300カードリーダーを2台使用して、授業用と会議用の出退勤を別々に管理するシステムです。
 
 ### ビルド
-pyinstaller --onefile 出退勤確認システム.py
+pyinstaller --onefile --noconsole 出退勤確認システム.py
 
 
 ## 主な機能

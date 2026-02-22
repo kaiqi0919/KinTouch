@@ -6,6 +6,7 @@ from .card_reader_manager import CardReaderManager
 from .csv_exporter import CSVExporter
 from .monthly_exporter import MonthlyExporter
 from .utils import ConfigManager, SoundManager
+from .correction_manager import CorrectionManager
 
 __all__ = [
     'JST',
@@ -20,4 +21,5 @@ __all__ = [
     'MonthlyExporter',
     'ConfigManager',
     'SoundManager',
+    'CorrectionManager',
 ]

@@ -24,12 +24,25 @@ class CardReaderManager:
             return []
     
     def initialize_readers(self, class_reader_name, meeting_reader_name):
-        """リーダー初期化"""
+        """リーダー初期化（Sony製リーダーを授業用に優先割り当て）"""
         try:
             r = readers()
-            if len(r) < 2:
+            
+            # リーダーが1台もない場合
+            if len(r) == 0:
                 return False
             
+            # リーダーが1台しかない場合は授業用のみに割り当て
+            if len(r) == 1:
+                self.class_reader = r[0]
+                self.class_reader_name = r[0].name
+                self.meeting_reader = None
+                self.meeting_reader_name = None
+                print(f"授業用リーダー: {r[0].name}")
+                print("会議用リーダー: 未接続")
+                return True
+            
+            # 2台以上の場合は設定された名前で識別
             self.class_reader_name = class_reader_name
             self.meeting_reader_name = meeting_reader_name
             
@@ -43,6 +56,8 @@ class CardReaderManager:
             if self.class_reader is None or self.meeting_reader is None:
                 return False
             
+            print(f"授業用リーダー: {self.class_reader.name}")
+            print(f"会議用リーダー: {self.meeting_reader.name}")
             return True
             
         except Exception as e:
